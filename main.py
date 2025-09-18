@@ -1,14 +1,12 @@
 import csv
-import getpass
 import sys
-
-
 import requests
+from dotenv import load_dotenv
+import os
 
 headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
 
 def print_get_contest(email, password):
-
     contestsr = requests.get(
         "https://www.hackerrank.com/rest/administration/contests",
         params={
@@ -42,19 +40,40 @@ def print_get_contest(email, password):
 
 
 def get_leaderboard_data(email, password, slug):
-    lbr = requests.get(
-        "https://www.hackerrank.com/rest/contests/" + slug + "/leaderboard",
-        params={
-            "offset":0,
-            "limit": 500
-        }, auth=(email, password), headers=headers)
-    
-    if lbr.status_code != 200:
-        print("Error getting leaderboard. Exiting...")
-        sys.exit(-1)
-    
-    lb_list = lbr.json()['models']
-    return lb_list
+    """
+    Improved function to get ALL leaderboard data using pagination
+    """
+    all_leaderboard_data = []
+    offset = 0
+    limit = 100  # Lebih kecil agar pasti dapat semua data
+
+    print("Fetching leaderboard data...")
+
+    while True:
+        print(f"Fetching entries {offset + 1} to {offset + limit}...")
+        lbr = requests.get(
+            f"https://www.hackerrank.com/rest/contests/{slug}/leaderboard",
+            params={
+                "offset": offset,
+                "limit": limit
+            }, auth=(email, password), headers=headers)
+
+        if lbr.status_code != 200:
+            print("Error getting leaderboard. Exiting...")
+            sys.exit(-1)
+
+        response_data = lbr.json()
+        lb_batch = response_data.get('models', [])
+        print(f"Batch size: {len(lb_batch)}")
+
+        all_leaderboard_data.extend(lb_batch)
+
+        if len(lb_batch) < limit:
+            break
+        offset += limit
+
+    print(f"Total entries fetched: {len(all_leaderboard_data)}")
+    return all_leaderboard_data
 
 
 def get_contest_details(email, password, slug, id):
@@ -107,39 +126,97 @@ def get_contest_details(email, password, slug, id):
 def get_leaderboard_file(email, password):
     con_slug, con_id = print_get_contest(email, password)
     ttime, scores = get_contest_details(email, password, con_slug, con_id)
-    leaderboard_data = get_leaderboard_data(email, password, con_slug)
+    leaderboard_data = get_leaderboard_data(email, password, con_slug)  # Now gets ALL data
     total_score = sum(scores)
-    with open('leaderboard-' + con_slug + ".csv", 'w') as lbf:
+    
+    filename = os.path.join('results', 'leaderboard-' + con_slug + ".csv")
+    print(f"Writing {len(leaderboard_data)} entries to {filename}...")
+    
+    with open(filename, 'w', newline='', encoding='utf-8') as lbf:
         fieldnames = ['rank', 'username', 'score', 'normalized_score',
-                      'time_in_sec', 'normailzed_time']
+                      'time_in_sec', 'normalized_time']  # Fixed typo: normailzed -> normalized
         writer = csv.DictWriter(lbf, fieldnames=fieldnames)
         writer.writeheader()
 
         for lb_entry in leaderboard_data:
-
             # 100 points
-            norm_score = lb_entry['score']/total_score*100
+            norm_score = lb_entry['score']/total_score*100 if total_score > 0 else 0
             # 1 hour
-            norm_time = lb_entry['time_taken']/(ttime*len(scores))*3600
+            norm_time = lb_entry['time_taken']/(ttime*len(scores))*3600 if (ttime*len(scores)) > 0 else 0
 
             writer.writerow({
                 'rank': lb_entry['rank'],
                 'score': lb_entry['score'],
                 'normalized_score': norm_score,
                 'time_in_sec': int(lb_entry['time_taken']),
-                'normailzed_time': norm_time,
+                'normalized_time': norm_time,  # Fixed typo
                 'username': lb_entry['hacker']
             })
-
+    
+    print(f"Successfully saved {len(leaderboard_data)} entries to {filename}")
     return True
 
 
 def main():
-  email = input("Enter email :")
-  password = getpass.getpass("Enter password (hidden) :")
-  
-  if get_leaderboard_file(email, password):
-    print("Done")
+    # Load environment variables from .env
+    load_dotenv()
+    email = os.getenv("HACKERRANK_USERNAME")
+    password = os.getenv("HACKERRANK_PASSWORD")
+    contest_link = os.getenv("CONTEST_LINK")
+
+    if not email or not password:
+        print("Please set HACKERRANK_USERNAME and HACKERRANK_PASSWORD in .env file.")
+        sys.exit(-1)
+
+    # If contest_link is set, extract slug from the link
+    if contest_link:
+        # Example: https://www.hackerrank.com/contests/your-contest-link
+        slug = contest_link.rstrip('/').split('/')[-1]
+        # You may need to get contest id from API
+        # Get contest list and find id by slug
+        contestsr = requests.get(
+            "https://www.hackerrank.com/rest/administration/contests",
+            params={"offset": 0, "limit": 100}, auth=(email, password), headers=headers)
+        if contestsr.status_code != 200:
+            print("Error getting contests. Exiting...")
+            sys.exit(-1)
+        contests_dict = contestsr.json()
+        contests_list = contests_dict.get('models', [])
+        contest_id = None
+        for c in contests_list:
+            if c['slug'] == slug:
+                contest_id = c['id']
+                break
+        if not contest_id:
+            print(f"Contest slug '{slug}' not found. Exiting...")
+            sys.exit(-1)
+        ttime, scores = get_contest_details(email, password, slug, contest_id)
+        leaderboard_data = get_leaderboard_data(email, password, slug)
+        total_score = sum(scores)
+        filename = os.path.join('results', 'leaderboard-' + slug + ".csv")
+        print(f"Writing {len(leaderboard_data)} entries to {filename}...")
+        with open(filename, 'w', newline='', encoding='utf-8') as lbf:
+            fieldnames = ['rank', 'username', 'score', 'normalized_score',
+                          'time_in_sec', 'normalized_time']
+            writer = csv.DictWriter(lbf, fieldnames=fieldnames)
+            writer.writeheader()
+            for lb_entry in leaderboard_data:
+                norm_score = lb_entry['score']/total_score*100 if total_score > 0 else 0
+                norm_time = lb_entry['time_taken']/(ttime*len(scores))*3600 if (ttime*len(scores)) > 0 else 0
+                writer.writerow({
+                    'rank': lb_entry['rank'],
+                    'score': lb_entry['score'],
+                    'normalized_score': norm_score,
+                    'time_in_sec': int(lb_entry['time_taken']),
+                    'normalized_time': norm_time,
+                    'username': lb_entry['hacker']
+                })
+        print(f"Successfully saved {len(leaderboard_data)} entries to {filename}")
+        print("Done! Check the generated CSV file.")
+    else:
+        # Fallback to manual input if contest_link not set
+        if get_leaderboard_file(email, password):
+            print("Done! Check the generated CSV file.")
 
 
 if __name__ == '__main__':
