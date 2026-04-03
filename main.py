@@ -6,6 +6,11 @@ import os
 
 headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
 
+
+def ensure_results_dir():
+    os.makedirs('results', exist_ok=True)
+
+
 def print_get_contest(email, password):
     contestsr = requests.get(
         "https://www.hackerrank.com/rest/administration/contests",
@@ -129,6 +134,7 @@ def get_leaderboard_file(email, password):
     leaderboard_data = get_leaderboard_data(email, password, con_slug)  # Now gets ALL data
     total_score = sum(scores)
     
+    ensure_results_dir()
     filename = os.path.join('results', 'leaderboard-' + con_slug + ".csv")
     print(f"Writing {len(leaderboard_data)} entries to {filename}...")
     
@@ -193,6 +199,7 @@ def main():
         ttime, scores = get_contest_details(email, password, slug, contest_id)
         leaderboard_data = get_leaderboard_data(email, password, slug)
         total_score = sum(scores)
+        ensure_results_dir()
         filename = os.path.join('results', 'leaderboard-' + slug + ".csv")
         print(f"Writing {len(leaderboard_data)} entries to {filename}...")
         with open(filename, 'w', newline='', encoding='utf-8') as lbf:
